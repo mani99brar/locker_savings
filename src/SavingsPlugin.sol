@@ -14,6 +14,12 @@ contract SavingsPlugin is BasePlugin {
     string public constant VERSION = "0.0.1";
     string public constant AUTHOR = "Marvin Arnold";
 
+    struct SavingsOptions {
+        address savingsAccount;
+        uint256 roundToNearest; // <- for a USD stable 1,000,000 would be 1 USD (6 decimals)
+        bool enabled;
+    }
+
     // this is a constant used in the manifest, to reference our only dependency: the single owner plugin
     // since it is the first, and only, plugin the index 0 will reference the single owner plugin
     // we can use this to tell the modular account that we should use the single owner plugin to validate our user op

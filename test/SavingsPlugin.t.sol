@@ -14,6 +14,7 @@ import {MSCAFactoryFixture} from "erc6900/reference-implementation/test/mocks/MS
 import {IEntryPoint} from "@eth-infinitism/account-abstraction/interfaces/IEntryPoint.sol";
 import {EntryPoint} from "@eth-infinitism/account-abstraction/core/EntryPoint.sol";
 import {UserOperation} from "@eth-infinitism/account-abstraction/interfaces/UserOperation.sol";
+import {ERC20Token} from "./utils/ERC20Token.sol";
 
 import {SavingsPlugin} from "../src/SavingsPlugin.sol";
 
@@ -22,11 +23,19 @@ contract SavingsPluginTest is Test {
 
     IEntryPoint entryPoint;
     UpgradeableModularAccount account1;
+    address account1Address;
     SavingsPlugin savingsPlugin;
     address owner1;
     uint256 owner1Key;
     address[] public owners;
     address payable beneficiary;
+
+    // ERC20 token that is being used for payment
+    ERC20Token testToken;
+    address testTokenAddress;
+
+    // The account receiving the saved funds
+    address payable savingsAccount;
 
     uint256 constant CALL_GAS_LIMIT = 70000;
     uint256 constant VERIFICATION_GAS_LIMIT = 1000000;
@@ -47,6 +56,7 @@ contract SavingsPluginTest is Test {
 
         // the beneficiary of the fees at the entry point
         beneficiary = payable(makeAddr("beneficiary"));
+        savingsAccount = payable(makeAddr("savingsAccount"));
 
         // create a single owner for this account and provide the address to our modular account
         // we'll also add ether to our account to pay for gas fees
@@ -54,7 +64,8 @@ contract SavingsPluginTest is Test {
         account1 = UpgradeableModularAccount(
             payable(factory.createAccount(owner1, 0))
         );
-        vm.deal(address(account1), 100 ether);
+        account1Address = address(account1);
+        vm.deal(account1Address, 100 ether);
 
         // create our counter plugin and grab the manifest hash so we can install it
         // note: plugins are singleton contracts, so we only need to deploy them once
@@ -79,13 +90,26 @@ contract SavingsPluginTest is Test {
             pluginInstallData: "0x",
             dependencies: dependencies
         });
+
+        // Deploy a mock ERC20 token for testing
+        testToken = new ERC20Token("Test Token", "TST");
+        testTokenAddress = address(testToken);
+
+        // Mint some test tokens to the account for use in the test
+        uint256 mintAmount = 1000 * 10 ** 6; // Mint 1000 tokens with 6 decimals
+        testToken.mint(account1Address, mintAmount);
+        assertEq(
+            testToken.balanceOf(account1Address),
+            mintAmount,
+            "Account1 should have been minted tokens"
+        );
     }
 
     function test_Subscribe() public {
         address service = makeAddr("service");
         // create a user operation which has the calldata to specify we'd like to subscribe
         UserOperation memory userOp = UserOperation({
-            sender: address(account1),
+            sender: account1Address,
             nonce: 0,
             initCode: "",
             callData: abi.encodeCall(SavingsPlugin.subscribe, (service, 10)),
@@ -114,7 +138,7 @@ contract SavingsPluginTest is Test {
         // check that we successfully subscribed!
         (uint256 amount, , bool enabled) = savingsPlugin.subscriptions(
             service,
-            address(account1)
+            account1Address
         );
         assertEq(amount, 10);
         assertEq(enabled, true);
@@ -124,7 +148,7 @@ contract SavingsPluginTest is Test {
         address service = makeAddr("service");
         // create a user operation which has the calldata to specify we'd like to subscribe
         UserOperation memory userOp = UserOperation({
-            sender: address(account1),
+            sender: account1Address,
             nonce: 0,
             initCode: "",
             callData: abi.encodeCall(SavingsPlugin.subscribe, (service, 10)),
@@ -153,7 +177,7 @@ contract SavingsPluginTest is Test {
         // we need to call from the service address
         vm.prank(service);
         skip(4 weeks);
-        savingsPlugin.collect(address(account1), 10);
+        savingsPlugin.collect(account1Address, 10);
         assertEq(service.balance, 10);
     }
 }
