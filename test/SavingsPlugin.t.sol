@@ -6,17 +6,21 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {UpgradeableModularAccount} from "erc6900/reference-implementation/src/account/UpgradeableModularAccount.sol";
 import {FunctionReference} from "erc6900/reference-implementation/src/interfaces/IPluginManager.sol";
+import {IStandardExecutor} from "erc6900/reference-implementation/src/interfaces/IStandardExecutor.sol";
 import {FunctionReferenceLib} from "erc6900/reference-implementation/src/helpers/FunctionReferenceLib.sol";
 import {SingleOwnerPlugin} from "erc6900/reference-implementation/src/plugins/owner/SingleOwnerPlugin.sol";
 import {ISingleOwnerPlugin} from "erc6900/reference-implementation/src/plugins/owner/ISingleOwnerPlugin.sol";
 import {MSCAFactoryFixture} from "erc6900/reference-implementation/test/mocks/MSCAFactoryFixture.sol";
-
 import {IEntryPoint} from "@eth-infinitism/account-abstraction/interfaces/IEntryPoint.sol";
 import {EntryPoint} from "@eth-infinitism/account-abstraction/core/EntryPoint.sol";
 import {UserOperation} from "@eth-infinitism/account-abstraction/interfaces/UserOperation.sol";
 import {ERC20Token} from "./utils/ERC20Token.sol";
-
+import {console} from "forge-std/console.sol";
 import {SavingsPlugin} from "../src/SavingsPlugin.sol";
+
+interface IERC20 {
+    function transfer(address, uint256) external;
+}
 
 contract SavingsPluginTest is Test {
     using ECDSA for bytes32;
@@ -37,8 +41,13 @@ contract SavingsPluginTest is Test {
     // The account receiving the saved funds
     address payable savingsAccount;
 
-    uint256 constant CALL_GAS_LIMIT = 70000;
-    uint256 constant VERIFICATION_GAS_LIMIT = 1000000;
+    // The account receiving a normal payment from the smart account
+    address payable paymentRecipient;
+
+    uint256 constant CALL_GAS_LIMIT = 900_000; // Adjusted gas limit
+    uint256 constant VERIFICATION_GAS_LIMIT = 9_000_000;
+
+    uint256 mintAmount;
 
     function setUp() public {
         // we'll be using the entry point so we can send a user operation through
@@ -54,9 +63,9 @@ contract SavingsPluginTest is Test {
             singleOwnerPlugin
         );
 
-        // the beneficiary of the fees at the entry point
-        beneficiary = payable(makeAddr("beneficiary"));
-        savingsAccount = payable(makeAddr("savingsAccount"));
+        beneficiary = payable(makeAddr("beneficiary")); // normally the bundler
+        savingsAccount = payable(makeAddr("savingsAccount")); // where the funds are saved
+        paymentRecipient = payable(makeAddr("paymentRecipient")); // arbitrary 3rd party being sent ERC20 from smart account
 
         // create a single owner for this account and provide the address to our modular account
         // we'll also add ether to our account to pay for gas fees
@@ -65,7 +74,7 @@ contract SavingsPluginTest is Test {
             payable(factory.createAccount(owner1, 0))
         );
         account1Address = address(account1);
-        vm.deal(account1Address, 100 ether);
+        vm.deal(account1Address, 1000000 ether);
 
         // create our counter plugin and grab the manifest hash so we can install it
         // note: plugins are singleton contracts, so we only need to deploy them once
@@ -96,7 +105,7 @@ contract SavingsPluginTest is Test {
         testTokenAddress = address(testToken);
 
         // Mint some test tokens to the account for use in the test
-        uint256 mintAmount = 1000 * 10 ** 6; // Mint 1000 tokens with 6 decimals
+        mintAmount = 1000 * 10 ** 6; // Mint 1000 tokens with 6 decimals
         testToken.mint(account1Address, mintAmount);
         assertEq(
             testToken.balanceOf(account1Address),
@@ -105,14 +114,22 @@ contract SavingsPluginTest is Test {
         );
     }
 
-    function test_Subscribe() public {
-        address service = makeAddr("service");
-        // create a user operation which has the calldata to specify we'd like to subscribe
-        UserOperation memory userOp = UserOperation({
+    function test_Transfer() public {
+        // register automation to the nearest dollar
+        uint256 automationIndex = 0;
+        uint256 roundUpToDecimal = 1 * 10 ** 6; // 1 USD with 6 decimals for USD stablecoins
+
+        // Step 1: Create a user operation to set up automation
+        UserOperation memory createAutomationUserOp = UserOperation({
             sender: account1Address,
             nonce: 0,
             initCode: "",
-            callData: abi.encodeCall(SavingsPlugin.subscribe, (service, 10)),
+            callData: abi.encodeWithSelector(
+                savingsPlugin.createAutomation.selector,
+                automationIndex,
+                savingsAccount,
+                roundUpToDecimal
+            ),
             callGasLimit: CALL_GAS_LIMIT,
             verificationGasLimit: VERIFICATION_GAS_LIMIT,
             preVerificationGas: 0,
@@ -122,62 +139,75 @@ contract SavingsPluginTest is Test {
             signature: ""
         });
 
-        // sign this user operation with the owner, otherwise it will revert due to the singleowner validation
-        bytes32 userOpHash = entryPoint.getUserOpHash(userOp);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(
+        // Sign the user operation with the owner's key
+        bytes32 createAutomationUserOpHash = entryPoint.getUserOpHash(
+            createAutomationUserOp
+        );
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(
             owner1Key,
-            userOpHash.toEthSignedMessageHash()
+            createAutomationUserOpHash.toEthSignedMessageHash()
         );
-        userOp.signature = abi.encodePacked(r, s, v);
+        createAutomationUserOp.signature = abi.encodePacked(r1, s1, v1);
 
-        // send our single user operation to subscribe
-        UserOperation[] memory userOps = new UserOperation[](1);
-        userOps[0] = userOp;
-        entryPoint.handleOps(userOps, beneficiary);
+        // Execute the createAutomation user operation
+        UserOperation[] memory createAutomationUserOps = new UserOperation[](1);
+        createAutomationUserOps[0] = createAutomationUserOp;
+        entryPoint.handleOps(createAutomationUserOps, beneficiary);
 
-        // check that we successfully subscribed!
-        (uint256 amount, , bool enabled) = savingsPlugin.subscriptions(
-            service,
-            account1Address
-        );
-        assertEq(amount, 10);
-        assertEq(enabled, true);
+        // // send an ERC20 transfer to some 3rd part0
+        // uint256 sendAmount = 1 * 10 ** 6; // Mint 1000 tokens with 6 decimals
+        // // Create a user operation to trigger the token transfer
+        // UserOperation memory userOp = UserOperation({
+        //     sender: account1Address,
+        //     nonce: 0,
+        //     initCode: "",
+        //     callData: abi.encodeWithSelector(
+        //         IStandardExecutor(account1Address).execute.selector,
+        //         testTokenAddress, // target address (ERC20 token)
+        //         0, // value (no ETH required)
+        //         abi.encodeWithSelector( // data parameter (calls ERC20's `transfer`)
+        //                 IERC20(testTokenAddress).transfer.selector,
+        //                 address(paymentRecipient),
+        //                 sendAmount
+        //             )
+        //     ),
+        //     callGasLimit: CALL_GAS_LIMIT,
+        //     verificationGasLimit: VERIFICATION_GAS_LIMIT,
+        //     preVerificationGas: 0,
+        //     maxFeePerGas: 2,
+        //     maxPriorityFeePerGas: 1,
+        //     paymasterAndData: "",
+        //     signature: ""
+        // });
+        // // Sign the user operation with the owner's key
+        // bytes32 userOpHash = entryPoint.getUserOpHash(userOp);
+        // (uint8 v, bytes32 r, bytes32 s) = vm.sign(
+        //     owner1Key,
+        //     userOpHash.toEthSignedMessageHash()
+        // );
+        // userOp.signature = abi.encodePacked(r, s, v);
+        // // Execute the user operation
+        // UserOperation[] memory userOps = new UserOperation[](1);
+        // userOps[0] = userOp;
+        // entryPoint.handleOps(userOps, savingsAccount);
+
+        // // Assert that the token transfer happened correctly
+        // assertEq(
+        //     testToken.balanceOf(account1Address),
+        //     mintAmount - sendAmount,
+        //     "Account1 should have fewer tokens"
+        // );
+
+        // assertEq(
+        //     testToken.balanceOf(paymentRecipient),
+        //     sendAmount,
+        //     "Recipient should have received the tokens"
+        // );
+
+        // assert that automatic savings happened
     }
 
-    function test_Collect() public {
-        address service = makeAddr("service");
-        // create a user operation which has the calldata to specify we'd like to subscribe
-        UserOperation memory userOp = UserOperation({
-            sender: account1Address,
-            nonce: 0,
-            initCode: "",
-            callData: abi.encodeCall(SavingsPlugin.subscribe, (service, 10)),
-            callGasLimit: CALL_GAS_LIMIT,
-            verificationGasLimit: VERIFICATION_GAS_LIMIT,
-            preVerificationGas: 0,
-            maxFeePerGas: 2,
-            maxPriorityFeePerGas: 1,
-            paymasterAndData: "",
-            signature: ""
-        });
-
-        // sign this user operation with the owner, otherwise it will revert due to the singleowner validation
-        bytes32 userOpHash = entryPoint.getUserOpHash(userOp);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(
-            owner1Key,
-            userOpHash.toEthSignedMessageHash()
-        );
-        userOp.signature = abi.encodePacked(r, s, v);
-
-        // send our single user operation to subscribe
-        UserOperation[] memory userOps = new UserOperation[](1);
-        userOps[0] = userOp;
-        entryPoint.handleOps(userOps, beneficiary);
-
-        // we need to call from the service address
-        vm.prank(service);
-        skip(4 weeks);
-        savingsPlugin.collect(account1Address, 10);
-        assertEq(service.balance, 10);
-    }
+    // test multiple savings automtions for the same account
+    // multiple for different accounts
+    //
 }

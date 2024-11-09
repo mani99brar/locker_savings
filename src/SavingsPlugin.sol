@@ -14,9 +14,9 @@ contract SavingsPlugin is BasePlugin {
     string public constant VERSION = "0.0.1";
     string public constant AUTHOR = "Marvin Arnold";
 
-    struct SavingsOptions {
-        address savingsAccount;
-        uint256 roundToNearest; // <- for a USD stable 1,000,000 would be 1 USD (6 decimals)
+    struct SavingsAutomations {
+        address savingsAccount; // where to send the funds
+        uint256 roundUpToDecimal; // <- for a USD stable 1,000,000 would be 1 USD (6 decimals)
         bool enabled;
     }
 
@@ -37,9 +37,25 @@ contract SavingsPlugin is BasePlugin {
         bool enabled;
     }
 
+    // Every owner address can have multiple automated savings configured.
+    mapping(address => mapping(uint256 => SavingsAutomations))
+        public savingsAutomations;
+
     // ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
     // ┃    Execution functions    ┃
     // ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+    function createAutomation(
+        uint256 automationIndex,
+        address savingsAccount,
+        uint256 roundUpToDecimal
+    ) external {
+        savingsAutomations[msg.sender][automationIndex] = SavingsAutomations(
+            savingsAccount,
+            roundUpToDecimal,
+            true
+        );
+    }
 
     // this is called through a user operation by the account owner
     function subscribe(address service, uint256 amount) external {
@@ -91,7 +107,7 @@ contract SavingsPlugin is BasePlugin {
         manifest.dependencyInterfaceIds[0] = type(IPlugin).interfaceId;
 
         manifest.executionFunctions = new bytes4[](1);
-        manifest.executionFunctions[0] = this.subscribe.selector;
+        manifest.executionFunctions[0] = this.createAutomation.selector;
 
         // you can think of ManifestFunction as a reference to a function somewhere,
         // we want to say "use this function" for some purpose - in this case,
@@ -111,7 +127,7 @@ contract SavingsPlugin is BasePlugin {
             1
         );
         manifest.userOpValidationFunctions[0] = ManifestAssociatedFunction({
-            executionSelector: this.subscribe.selector,
+            executionSelector: this.createAutomation.selector,
             associatedFunction: ownerUserOpValidationFunction
         });
 
