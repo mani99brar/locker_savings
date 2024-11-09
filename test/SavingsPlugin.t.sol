@@ -225,6 +225,7 @@ contract SavingsPluginTest is Test {
         );
     }
 
+    // savings shouldn't happen if it means the transfer will fail
     // test sending more than a roundUpTo amount and exactly equal to
     // test multiple savings automtions for the same account
     // multiple for different accounts

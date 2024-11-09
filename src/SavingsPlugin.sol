@@ -5,7 +5,6 @@ import {BasePlugin} from "modular-account-libs/plugins/BasePlugin.sol";
 import {IPluginExecutor} from "modular-account-libs/interfaces/IPluginExecutor.sol";
 import {IStandardExecutor} from "modular-account-libs/interfaces/IStandardExecutor.sol";
 import {ManifestFunction, ManifestExecutionHook, ManifestAssociatedFunctionType, ManifestAssociatedFunction, PluginManifest, PluginMetadata, IPlugin} from "modular-account-libs/interfaces/IPlugin.sol";
-import {console} from "forge-std/console.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 
 enum FunctionId {
@@ -75,94 +74,6 @@ contract SavingsPlugin is BasePlugin {
     /// @inheritdoc BasePlugin
     function onUninstall(bytes calldata) external pure override {}
 
-    // function preExecutionHook(
-    //     uint8 functionId,
-    //     address,
-    //     uint256 value,
-    //     bytes calldata data
-    // ) external override returns (bytes memory) {
-    //     try this.decodeData(data) returns (
-    //         address tokenAddress,
-    //         uint256 ethValue,
-    //         bytes memory innerData
-    //     ) {
-    //         // Retrieve the automation rule for the sender
-    //         SavingsAutomation memory automation = savingsAutomations[
-    //             msg.sender
-    //         ][0];
-    //         if (automation.enabled && automation.roundUpTo > 0) {
-    //             uint256 roundUpTo = automation.roundUpTo;
-
-    //             // Decode inner data
-    //             (
-    //                 bytes4 transferSelector,
-    //                 address recipient,
-    //                 uint256 transferAmount
-    //             ) = abi.decode(innerData, (bytes4, address, uint256));
-
-    //             // Log each variable separately for compatibility
-    //             console.log("preExecutionHook transferSelector:");
-    //             console.logBytes4(transferSelector);
-    //             console.log("Recipient address:");
-    //             console.logAddress(recipient);
-    //             console.log("Transfer amount:");
-    //             console.logUint(transferAmount);
-
-    //             // Verify selectors and proceed with business logic
-    //             require(
-    //                 transferSelector == IERC20.transfer.selector,
-    //                 "Invalid transfer selector"
-    //             );
-
-    //             uint256 roundUpAmount = ((transferAmount + roundUpTo - 1) /
-    //                 roundUpTo) * roundUpTo;
-    //             uint256 savingsAmount = roundUpAmount - transferAmount;
-
-    //             if (savingsAmount > 0) {
-    //                 IPluginExecutor(msg.sender).executeFromPluginExternal(
-    //                     tokenAddress,
-    //                     0, // No ETH required
-    //                     abi.encodeWithSelector(
-    //                         IERC20.transfer.selector,
-    //                         automation.savingsAccount,
-    //                         savingsAmount
-    //                     )
-    //                 );
-    //             }
-    //         }
-    //     } catch Error(string memory reason) {
-    //         // Log the error reason if it's a revert with a reason string
-    //         console.log("Error in preExecutionHook:");
-    //         console.log(reason);
-    //     } catch (bytes memory lowLevelData) {
-    //         // Log the raw error data if it's a low-level revert without a reason string
-    //         console.log("Low-level error in preExecutionHook:");
-    //         console.logBytes(lowLevelData);
-    //     }
-
-    //     // Return an empty bytes array as no additional context is needed for post-execution
-    //     return "";
-    // }
-
-    // function decodeData(
-    //     bytes calldata data
-    // )
-    //     external
-    //     pure
-    //     returns (address tokenAddress, uint256 ethValue, bytes memory innerData)
-    // {
-    //     (
-    //         bytes4 outerSelector,
-    //         address tokenAddress,
-    //         uint256 ethValue,
-    //         bytes memory innerData
-    //     ) = abi.decode(data, (bytes4, address, uint256, bytes));
-    //     require(
-    //         outerSelector == IStandardExecutor.execute.selector,
-    //         "Invalid execute selector"
-    //     );
-    // }
-
     function preExecutionHook(
         uint8 functionId,
         address,
@@ -183,9 +94,6 @@ contract SavingsPlugin is BasePlugin {
                     data[4:], // Skip the first 4 bytes (selector for `execute`)
                     (address, uint256, bytes)
                 );
-            console.log("preExecutionHook token address: %s", tokenAddress);
-            console.log("preExecutionHook ethValue: %s", ethValue);
-            console.logBytes(innerData);
 
             // Separate the selector and payload of `innerData`
             bytes4 transferSelector;
@@ -199,19 +107,10 @@ contract SavingsPlugin is BasePlugin {
                 transferAmount := mload(add(innerData, 68)) // Next 32 bytes (uint256)
             }
 
-            console.log("preExecutionHook recipient: %s", recipient);
-            console.log("preExecutionHook transferAmount: %s", transferAmount);
-
             uint256 roundUpAmount = ((transferAmount + roundUpTo - 1) /
                 roundUpTo) * roundUpTo;
             uint256 savingsAmount = roundUpAmount - transferAmount;
-            // uint256 savingsAmount = 1;
-            console.log(
-                "preExecutionHook transferAmount: %s, roundUpAmount: %s, savingsAmount: %s",
-                transferAmount,
-                roundUpAmount,
-                savingsAmount
-            );
+
             if (savingsAmount > 0) {
                 // Perform the savings transfer before the main transfer
                 IPluginExecutor(msg.sender).executeFromPluginExternal(
@@ -306,13 +205,6 @@ contract SavingsPlugin is BasePlugin {
             preExecHook: execHook,
             postExecHook: none
         });
-
-        // manifest.permittedExternalCalls = new ManifestExternalCallPermission[](1);
-        // manifest.permittedExternalCalls[0] = ManifestExternalCallPermission({
-        //     externalAddress: TARGET_ERC20_CONTRACT,
-        //     permitAnySelector: true,
-        //     selectors: new bytes4[](0)
-        // });
 
         manifest.permitAnyExternalAddress = true;
         manifest.canSpendNativeToken = true;
