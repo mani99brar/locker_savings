@@ -53,6 +53,7 @@ contract SavingsPluginTest is Test {
         // we'll be using the entry point so we can send a user operation through
         // in this case our plugin only accepts calls to subscribe via user operations so this is essential
         entryPoint = IEntryPoint(address(new EntryPoint()));
+        console.log("Entry point address: %s", address(entryPoint));
 
         // our modular smart contract account will be installed with the single owner plugin
         // so we have a way to determine who is authorized to do things on this account
@@ -103,6 +104,7 @@ contract SavingsPluginTest is Test {
         // Deploy a mock ERC20 token for testing
         testToken = new ERC20Token("Test Token", "TST");
         testTokenAddress = address(testToken);
+        console.log("Test token address: %s", testTokenAddress);
 
         // Mint some test tokens to the account for use in the test
         mintAmount = 1000 * 10 ** 6; // Mint 1000 tokens with 6 decimals
@@ -114,10 +116,12 @@ contract SavingsPluginTest is Test {
         );
     }
 
+    /// @notice Test the createAutomation function
+    /// @dev Test sending $0.90 to a 3rd party and saving $0.10 automatically
     function test_Transfer() public {
         // register automation to the nearest dollar
         uint256 automationIndex = 0;
-        uint256 roundUpToDecimal = 1 * 10 ** 6; // 1 USD with 6 decimals for USD stablecoins
+        uint256 roundUpTo = 1 * 10 ** 6; // 1 USD with 6 decimals for USD stablecoins
 
         // Step 1: Create a user operation to set up automation
         UserOperation memory createAutomationUserOp = UserOperation({
@@ -128,7 +132,7 @@ contract SavingsPluginTest is Test {
                 savingsPlugin.createAutomation.selector,
                 automationIndex,
                 savingsAccount,
-                roundUpToDecimal
+                roundUpTo
             ),
             callGasLimit: CALL_GAS_LIMIT,
             verificationGasLimit: VERIFICATION_GAS_LIMIT,
@@ -154,60 +158,75 @@ contract SavingsPluginTest is Test {
         createAutomationUserOps[0] = createAutomationUserOp;
         entryPoint.handleOps(createAutomationUserOps, beneficiary);
 
-        // // send an ERC20 transfer to some 3rd part0
-        // uint256 sendAmount = 1 * 10 ** 6; // Mint 1000 tokens with 6 decimals
-        // // Create a user operation to trigger the token transfer
-        // UserOperation memory userOp = UserOperation({
-        //     sender: account1Address,
-        //     nonce: 0,
-        //     initCode: "",
-        //     callData: abi.encodeWithSelector(
-        //         IStandardExecutor(account1Address).execute.selector,
-        //         testTokenAddress, // target address (ERC20 token)
-        //         0, // value (no ETH required)
-        //         abi.encodeWithSelector( // data parameter (calls ERC20's `transfer`)
-        //                 IERC20(testTokenAddress).transfer.selector,
-        //                 address(paymentRecipient),
-        //                 sendAmount
-        //             )
-        //     ),
-        //     callGasLimit: CALL_GAS_LIMIT,
-        //     verificationGasLimit: VERIFICATION_GAS_LIMIT,
-        //     preVerificationGas: 0,
-        //     maxFeePerGas: 2,
-        //     maxPriorityFeePerGas: 1,
-        //     paymasterAndData: "",
-        //     signature: ""
-        // });
-        // // Sign the user operation with the owner's key
-        // bytes32 userOpHash = entryPoint.getUserOpHash(userOp);
-        // (uint8 v, bytes32 r, bytes32 s) = vm.sign(
-        //     owner1Key,
-        //     userOpHash.toEthSignedMessageHash()
-        // );
-        // userOp.signature = abi.encodePacked(r, s, v);
-        // // Execute the user operation
-        // UserOperation[] memory userOps = new UserOperation[](1);
-        // userOps[0] = userOp;
-        // entryPoint.handleOps(userOps, savingsAccount);
+        // send an ERC20 transfer to some 3rd part0
+        uint256 sendAmount = 9 * 10 ** 5; // Send 90 cents. Expect 10 cents saved
+        console.log("Sending %s tokens to %s", sendAmount, paymentRecipient);
+        console.logBytes(
+            abi.encodeWithSelector( // data parameter (calls ERC20's `transfer`)
+                    IERC20(testTokenAddress).transfer.selector,
+                    address(paymentRecipient),
+                    sendAmount
+                )
+        );
+        // Create a user operation to trigger the token transfer
+        UserOperation memory userOp = UserOperation({
+            sender: account1Address,
+            nonce: 1,
+            initCode: "",
+            callData: abi.encodeWithSelector(
+                IStandardExecutor(account1Address).execute.selector,
+                testTokenAddress, // target address (ERC20 token)
+                0, // value (no ETH required)
+                abi.encodeWithSelector( // data parameter (calls ERC20's `transfer`)
+                        IERC20(testTokenAddress).transfer.selector,
+                        address(paymentRecipient),
+                        sendAmount
+                    )
+            ),
+            callGasLimit: CALL_GAS_LIMIT,
+            verificationGasLimit: VERIFICATION_GAS_LIMIT,
+            preVerificationGas: 0,
+            maxFeePerGas: 2,
+            maxPriorityFeePerGas: 1,
+            paymasterAndData: "",
+            signature: ""
+        });
+        // Sign the user operation with the owner's key
+        bytes32 userOpHash = entryPoint.getUserOpHash(userOp);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(
+            owner1Key,
+            userOpHash.toEthSignedMessageHash()
+        );
+        userOp.signature = abi.encodePacked(r, s, v);
+        // Execute the user operation
+        UserOperation[] memory userOps = new UserOperation[](1);
+        userOps[0] = userOp;
+        entryPoint.handleOps(userOps, savingsAccount);
 
-        // // Assert that the token transfer happened correctly
-        // assertEq(
-        //     testToken.balanceOf(account1Address),
-        //     mintAmount - sendAmount,
-        //     "Account1 should have fewer tokens"
-        // );
+        // Assert that the token transfer happened correctly
+        assertEq(
+            testToken.balanceOf(account1Address),
+            mintAmount - roundUpTo,
+            "Account1 should have fewer tokens"
+        );
 
-        // assertEq(
-        //     testToken.balanceOf(paymentRecipient),
-        //     sendAmount,
-        //     "Recipient should have received the tokens"
-        // );
+        assertEq(
+            testToken.balanceOf(paymentRecipient),
+            sendAmount,
+            "Recipient should have received the tokens"
+        );
 
         // assert that automatic savings happened
+        uint256 expectedSavings = roundUpTo - sendAmount;
+        assertEq(
+            testToken.balanceOf(savingsAccount),
+            expectedSavings,
+            "Savings account should have received 10 cents"
+        );
     }
 
+    // test sending more than a roundUpTo amount and exactly equal to
     // test multiple savings automtions for the same account
     // multiple for different accounts
-    //
+    // transfer should still succeed even if the savings transfer fails
 }
