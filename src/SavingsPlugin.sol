@@ -12,20 +12,14 @@ enum FunctionId {
     EXECUTE_BATCH_FUNCTION
 }
 
-/// @title Subscription Plugin
-/// @author Alchemy
-/// @notice This plugin lets us automatically save when making payments
+/// @title Savings Plugin
+/// @author Locker
+/// @notice This plugin lets users automatically save when making payments
 contract SavingsPlugin is BasePlugin {
     // metadata used by the pluginMetadata() method down below
     string public constant NAME = "Locker Savings Plugin";
     string public constant VERSION = "0.0.1";
     string public constant AUTHOR = "Marvin Arnold";
-
-    struct SavingsAutomation {
-        address savingsAccount; // where to send the funds
-        uint256 roundUpTo; // <- for a USD stable 1,000,000 would be 1 USD (6 decimals)
-        bool enabled;
-    }
 
     // this is a constant used in the manifest, to reference our only dependency: the single owner plugin
     // since it is the first, and only, plugin the index 0 will reference the single owner plugin
@@ -35,12 +29,9 @@ contract SavingsPlugin is BasePlugin {
         internal constant _MANIFEST_DEPENDENCY_INDEX_OWNER_USER_OP_VALIDATION =
         0;
 
-    mapping(address => mapping(address => SubscriptionData))
-        public subscriptions;
-
-    struct SubscriptionData {
-        uint256 amount; // <- native currency
-        uint256 lastPaid;
+    struct SavingsAutomation {
+        address savingsAccount; // where to send the funds
+        uint256 roundUpTo; // <- for a USD stable 1,000,000 would be 1 USD (6 decimals)
         bool enabled;
     }
 
